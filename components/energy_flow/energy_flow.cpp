@@ -726,7 +726,11 @@ class DetailsCard : public tessera::Card {
   void layout_diagram() {
     const Reading probe = plugin_->read(invert_, opts_);
     has_bat_layout_ = probe.have_battery;
-    const int r = dia_ / 2;
+    // Diamond needs 3 vertical circle positions; tighten dia_ so circles don't overlap.
+    const int effective_dia = has_bat_layout_
+        ? std::min(dia_, (height_ - 2 * label_h_) * 10 / 30)
+        : dia_;
+    const int r = effective_dia / 2;
     const int top_cy    = label_h_ + ui::px(6) + r;
     const int bottom_cy = height_ - label_h_ - ui::px(6) - r;
     const int mid_cy    = (top_cy + bottom_cy) / 2;
@@ -744,7 +748,7 @@ class DetailsCard : public tessera::Card {
     }
 
     // What fits inside a ring.
-    const int inner = dia_ - 2 * ring_w_ - ui::px(6);
+    const int inner = effective_dia - 2 * ring_w_ - ui::px(6);
     const Font value_font = ui::text_width("8.88 kW", Font::BODY_LARGE) <= inner ? Font::BODY_LARGE : Font::BODY;
     const int vh = ui::line_height(value_font);
     const Font icon_font = ui::line_height(Font::ICON) + vh + label_h_ <= inner ? Font::ICON : Font::ICON_SMALL;
@@ -754,18 +758,18 @@ class DetailsCard : public tessera::Card {
     const int n_nodes = has_bat_layout_ ? NODES : 3;
     for (int i = 0; i < n_nodes; ++i) {
       Node &n = nodes_[i];
-      place(n.ring, n.cx - r, n.cy - r, dia_, dia_);
+      place(n.ring, n.cx - r, n.cy - r, effective_dia, effective_dia);
       show(n.ring, true);
       const int start = -(ih + text_block) / 2;
       ui::set_font(n.icon, icon_font);
       ui::set_font(n.value, value_font);
-      inside(n.ring, n.icon, dia_ - 2 * ring_w_, ih, start + ih / 2);
-      inside(n.ring, n.value, dia_ - 2 * ring_w_, vh, start + ih + vh / 2);
-      inside(n.ring, n.extra, dia_ - 2 * ring_w_, label_h_, start + ih + vh + label_h_ / 2);
+      inside(n.ring, n.icon, effective_dia - 2 * ring_w_, ih, start + ih / 2);
+      inside(n.ring, n.value, effective_dia - 2 * ring_w_, vh, start + ih + vh / 2);
+      inside(n.ring, n.extra, effective_dia - 2 * ring_w_, label_h_, start + ih + vh + label_h_ / 2);
       show(n.extra, show_extra_);
       // SUN name above, BATTERY name below, GRID/HOME name below.
       const int ny = i == SUN ? n.cy - r - label_h_ - ui::px(4) : n.cy + r + ui::px(4);
-      const int name_w = dia_ + ui::px(40);
+      const int name_w = effective_dia + ui::px(40);
       place(n.name, std::max(0, std::min(n.cx - name_w / 2, width_ - name_w)), std::max(0, ny), name_w, label_h_);
     }
     if (!has_bat_layout_) {
