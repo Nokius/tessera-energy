@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.2.0
+- Battery energy flow: add up to four optional sensors per tile (charge power, discharge power, charged today, discharged today). When configured, a battery circle appears in the tile and a battery node in the detail card, with arrows showing which way power flows. Home consumption formula now includes the battery's net contribution.
+
 ## 1.1.5
 - Coverage no longer blocks installation: it is now a per-tile option set after install. Leave it empty and the plugin works it out from solar and grid.
 

@@ -22,7 +22,15 @@
     "row_coverage": "PV-Deckung",
     "row_pv_today": "PV heute",
     "row_forecast": "Prognose heute",
-    "row_grid_today": "Netzbezug heute"
+    "row_grid_today": "Netzbezug heute",
+    "battery": "Batterie",
+    "charging": "laden",
+    "discharging": "entladen",
+    "row_battery": "Batterie",
+    "row_bat_today_charge": "Heute geladen",
+    "row_bat_today_discharge": "Heute entladen",
+    "day_bat_charge": "geladen {v}",
+    "day_bat_discharge": "entladen {v}"
   },
   "app": {
     "name": "Energiefluss",
@@ -45,6 +53,14 @@
     "input_forecast": "Prognose heute",
     "input_forecast_hint": "Solarprognose für heute in kWh, z. B. von Forecast.Solar. Darf leer bleiben.",
     "input_grid_today": "Netzbezug heute",
-    "input_grid_today_hint": "Heute aus dem Netz bezogene Energie in kWh. Darf leer bleiben."
+    "input_grid_today_hint": "Heute aus dem Netz bezogene Energie in kWh. Darf leer bleiben.",
+    "battery_charge_option": "Ladeleistung Batterie",
+    "battery_charge_option_hint": "Leistung beim Laden der Batterie in W oder kW. Leer lassen wenn keine Batterie.",
+    "battery_discharge_option": "Entladeleistung Batterie",
+    "battery_discharge_option_hint": "Leistung beim Entladen der Batterie in W oder kW. Leer lassen wenn keine Batterie.",
+    "battery_today_charge_option": "Batterie heute geladen",
+    "battery_today_charge_option_hint": "Heute in die Batterie geladene Energie in kWh. Darf leer bleiben.",
+    "battery_today_discharge_option": "Batterie heute entladen",
+    "battery_today_discharge_option_hint": "Heute aus der Batterie entnommene Energie in kWh. Darf leer bleiben."
   }
 }

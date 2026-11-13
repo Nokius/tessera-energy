@@ -16,12 +16,22 @@ enum Field : uint8_t {
 
 // What the tile and the card show, worked out from the sensors. Power in W, energy in kWh; NAN for not known.
 struct Reading {
-  bool have_grid = false;  // the grid sensor has a number
-  float grid = NAN;        // + from the grid, - back to it
-  float pv = NAN;          // what the panels make now
-  float home = NAN;        // what the house uses now: grid + pv
-  float coverage = NAN;    // the share of the house's use the panels cover now, 0 to 100
+  bool have_grid = false;     // the grid sensor has a number
+  bool have_battery = false;  // at least one battery sensor is set
+  float grid = NAN;           // + from the grid, - back to it
+  float pv = NAN;             // what the panels make now
+  float home = NAN;           // what the house uses now: grid + pv + battery net
+  float coverage = NAN;       // the share of the house's use the panels cover now, 0 to 100
+  float battery = NAN;        // net battery power: + discharging, - charging
   float pv_today = NAN, forecast = NAN, grid_today = NAN;
+  float battery_today_charge = NAN, battery_today_discharge = NAN;
+};
+
+// Values that come from tile options (not from compiled sensors).
+struct TileOptions {
+  float coverage = NAN;
+  float bat_charge = NAN, bat_discharge = NAN;
+  float bat_today_charge = NAN, bat_today_discharge = NAN;
 };
 
 // The plugin: a tile ("flow") and a card ("details"). It holds the text sensors plugin.yaml reads.
@@ -34,8 +44,7 @@ class EnergyFlow : public Component, public tessera::Plugin {
     if (index >= 0 && index < FIELD_COUNT) fields_[index] = s;
   }
   // Everything at once; `invert` for a meter that counts what goes to the grid as positive.
-  // `coverage_sensor`: a tile option value in %; NAN to work it out from solar and grid.
-  Reading read(bool invert, float coverage_sensor = NAN) const;
+  Reading read(bool invert, TileOptions opts = {}) const;
 
   // "352 W", "1,24 kW", "3,4 kWh" in the screen's decimal sign.
   std::string power_text(float watts) const;
@@ -43,7 +52,7 @@ class EnergyFlow : public Component, public tessera::Plugin {
 
   // The tile's settings for the card it opens.
   mutable bool card_invert = false;
-  mutable float card_coverage = NAN;
+  mutable TileOptions card_opts;
 
  protected:
   float number(int index) const;

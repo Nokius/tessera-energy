@@ -1,7 +1,7 @@
 # Electricity at home with solar: what the solar panels make, what the house uses, what comes from the grid or goes
 # back to it, and the day so far. Every field is explained in docs/MANIFEST.md of tessera-plugins.
 id: energy_flow
-version: 1.1.5
+version: 1.2.0
 # 0.9: Tone, ui::set_fill and one-line labels; 0.10: ui::text; 0.15: entity tile options.
 api: "0.15"
 icon: solar-power
@@ -32,13 +32,21 @@ tiles:
     name: tile_name
     icon: solar-power
     sizes: { min: 1x1, max: 6x3 }
-    # Three circles with icons, six labels, two arrows, the share bar and a line of the day.
-    memory: 1400
+    # Up to four circles with icons, labels, arrows, the share bar, a line of the day, battery state.
+    memory: 1900
     example: tile_example
     options:
       - { id: invert, kind: toggle, default: false, label: invert, hint: invert_hint }
       - { id: today, kind: toggle, default: true, label: today, hint: today_hint }
       - { id: coverage, kind: entity, domains: [sensor], label: coverage_option, hint: coverage_option_hint }
+      - { id: battery_charge, kind: entity, domains: [sensor], label: battery_charge_option,
+          hint: battery_charge_option_hint }
+      - { id: battery_discharge, kind: entity, domains: [sensor], label: battery_discharge_option,
+          hint: battery_discharge_option_hint }
+      - { id: battery_today_charge, kind: entity, domains: [sensor], label: battery_today_charge_option,
+          hint: battery_today_charge_option_hint }
+      - { id: battery_today_discharge, kind: entity, domains: [sensor], label: battery_today_discharge_option,
+          hint: battery_today_discharge_option_hint }
 
 cards:
   # A tap on the tile: the same, large, with the day so far.

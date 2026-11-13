@@ -33,12 +33,13 @@ static void set_readable(lv_obj_t *label, tessera::Tone tone, theme::Role role) 
   else ui::set_color(label, theme::INK);
 }
 
-static constexpr uint32_t ICON_SOLAR = 0xF0A72;  // solar-power
-static constexpr uint32_t ICON_HOME = 0xF02DC;   // home
-static constexpr uint32_t ICON_GRID = 0xF0D3E;   // transmission-tower
-static constexpr uint32_t ICON_RIGHT = 0xF0054;  // arrow-right
-static constexpr uint32_t ICON_LEFT = 0xF004D;   // arrow-left
-static constexpr float FLOWING = 5.0f;           // watts below which nothing counts as flowing
+static constexpr uint32_t ICON_SOLAR = 0xF0A72;    // solar-power
+static constexpr uint32_t ICON_HOME = 0xF02DC;     // home
+static constexpr uint32_t ICON_GRID = 0xF0D3E;     // transmission-tower
+static constexpr uint32_t ICON_BATTERY = 0xF12A3;  // home-battery
+static constexpr uint32_t ICON_RIGHT = 0xF0054;    // arrow-right
+static constexpr uint32_t ICON_LEFT = 0xF004D;     // arrow-left
+static constexpr float FLOWING = 5.0f;             // watts below which nothing counts as flowing
 
 // The colours of the three: the sun amber, the grid blue while it gives, green while it takes.
 static constexpr theme::Role SOLAR = theme::MARK_AMBER;
@@ -86,21 +87,29 @@ static float kwh(float v, const char *unit) {
   return v;
 }
 
-Reading EnergyFlow::read(bool invert, float coverage_sensor) const {
+Reading EnergyFlow::read(bool invert, TileOptions opts) const {
   Reading r;
   r.grid = watts(number(F_GRID), unit(F_GRID_UNIT));
   r.have_grid = !std::isnan(r.grid);
   if (r.have_grid && invert) r.grid = -r.grid;
   r.pv = watts(number(F_PV), unit(F_PV_UNIT));
   if (!std::isnan(r.pv)) r.pv = std::max(0.0f, r.pv);
-  if (r.have_grid) r.home = std::max(0.0f, r.grid + (std::isnan(r.pv) ? 0.0f : r.pv));
-  r.coverage = !std::isnan(coverage_sensor) ? coverage_sensor : NAN;
+  const float bd = std::isnan(opts.bat_discharge) ? 0.0f : opts.bat_discharge;
+  const float bc = std::isnan(opts.bat_charge)    ? 0.0f : opts.bat_charge;
+  r.have_battery = !std::isnan(opts.bat_discharge) || !std::isnan(opts.bat_charge);
+  r.battery = r.have_battery ? bd - bc : NAN;
+  if (r.have_grid)
+    r.home = std::max(0.0f, r.grid + (std::isnan(r.pv) ? 0.0f : r.pv)
+                     + (r.have_battery ? r.battery : 0.0f));
+  r.coverage = !std::isnan(opts.coverage) ? opts.coverage : NAN;
   if (std::isnan(r.coverage) && !std::isnan(r.pv) && !std::isnan(r.home))
     r.coverage = r.home > FLOWING ? 100.0f * std::min(r.pv, r.home) / r.home : (r.pv > FLOWING ? 100.0f : 0.0f);
   if (!std::isnan(r.coverage)) r.coverage = std::max(0.0f, std::min(100.0f, r.coverage));
   r.pv_today = kwh(number(F_PV_TODAY), unit(F_PV_TODAY_UNIT));
   r.forecast = kwh(number(F_FORECAST), unit(F_FORECAST_UNIT));
   r.grid_today = kwh(number(F_GRID_TODAY), unit(F_GRID_TODAY_UNIT));
+  r.battery_today_charge    = opts.bat_today_charge;
+  r.battery_today_discharge = opts.bat_today_discharge;
   return r;
 }
 
@@ -179,6 +188,7 @@ class FlowView {
     // Side by side when three circles and their values fit, with the arrows between them.
     const int need = dia_ + ui::px(8) + ui::text_width("8,88 kW", value_font_);
     wide_ = 3 * need + 2 * (arrow_w_ + ui::px(8)) <= width_;
+    wide4_ = 4 * need + 3 * (arrow_w_ + ui::px(8)) <= width_;
 
     for (Block &b : blocks_) {
       b.circle = ui::block(parent, theme::TRACK);
@@ -192,6 +202,7 @@ class FlowView {
       a = ui::label(parent, Font::ICON_SMALL, theme::MUTED);
       lv_obj_set_style_text_align(a, LV_TEXT_ALIGN_CENTER, 0);
     }
+    bat_line_ = ui::label(parent, Font::BODY, theme::MUTED);
     share_track_ = ui::block(parent, theme::TRACK);
     share_sun_ = ui::block(parent, SOLAR);
     share_grid_ = ui::block(parent, IMPORT);
@@ -206,16 +217,16 @@ class FlowView {
     place(note_, 0, (height_ - ui::line_height(Font::BODY_LARGE)) / 2, width_, ui::line_height(Font::BODY_LARGE));
     // Nothing shows until the first paint has placed it.
     for (Block &b : blocks_) hide_block(b);
-    for (lv_obj_t *o : {arrows_[0], arrows_[1], share_track_, share_sun_, share_grid_, share_left_, share_right_, day_,
-                        fc_track_, fc_fill_, fc_label_})
+    for (lv_obj_t *o : {arrows_[0], arrows_[1], arrows_[2], share_track_, share_sun_, share_grid_, share_left_,
+                        share_right_, day_, fc_track_, fc_fill_, fc_label_, bat_line_})
       show(o, false);
   }
 
   void paint(const Reading &r) {
     if (!r.have_grid) {
       for (Block &b : blocks_) hide_block(b);
-      for (lv_obj_t *o : {arrows_[0], arrows_[1], share_track_, share_sun_, share_grid_, share_left_, share_right_, day_,
-                          fc_track_, fc_fill_, fc_label_})
+      for (lv_obj_t *o : {arrows_[0], arrows_[1], arrows_[2], share_track_, share_sun_, share_grid_, share_left_,
+                          share_right_, day_, fc_track_, fc_fill_, fc_label_, bat_line_})
         show(o, false);
       show(note_, true);
       ui::set_text(note_, plugin_->text("choose"));
@@ -229,11 +240,15 @@ class FlowView {
     // Which parts there is something for, and of those which fit, in this order: the share bar, the day, the
     // forecast. A change of them places everything again.
     const bool has_pv = !std::isnan(r.pv);
+    const bool has_bat = r.have_battery;
+    const bool show4 = has_bat && wide4_;
     const std::string day = day_text(r);
     const bool want_share = !std::isnan(r.coverage) && r.home > FLOWING;
     const bool want_day = today_ && !day.empty();
     const bool want_fc = today_ && !std::isnan(r.forecast) && r.forecast > 0 && !std::isnan(r.pv_today);
-    int parts = 0, used = wide_ ? main_h_ : compact_main_h(has_pv);
+    // In narrow or 3-wide mode, offer a battery text line when no other lines fill the space.
+    const bool want_bat_line = has_bat && !show4 && wide_;
+    int parts = 0, used = show4 ? main_h_ : (wide_ ? main_h_ : compact_main_h(has_pv));
     auto take = [&](bool want, int h, int bit) {
       if (want && used + gap_ + h <= height_) {
         used += gap_ + h;
@@ -243,18 +258,20 @@ class FlowView {
     take(want_share, share_h(), 1);
     take(want_day, body_h_, 2);
     take(want_fc, bar_h_ + ui::px(4) + body_h_, 4);
-    const int layout = parts | (has_pv ? 8 : 0);
+    take(want_bat_line, body_h_, 8);
+    const int layout = parts | (has_pv ? 16 : 0) | (show4 ? 32 : 0);
     if (layout != shown_) {
       shown_ = layout;
-      arrange(parts, has_pv, used);
+      arrange(parts, has_pv, show4, used);
     }
 
-    paint_blocks(r, has_pv);
+    paint_blocks(r, has_pv, show4);
     paint_share(r, parts & 1);
     show(day_, parts & 2);
     ui::set_text(day_, parts & 2 ? day : "");
     ui::set_color(day_, theme::INK_SOFT);
     paint_forecast(r, parts & 4);
+    paint_bat_line(r, parts & 8);
   }
 
   void on_theme() {
@@ -270,14 +287,14 @@ class FlowView {
   struct Block {
     lv_obj_t *circle{}, *icon{}, *label{}, *value{};
   };
-  enum { SUN, HOME, GRID };
+  enum { SUN, HOME, GRID, BATTERY };
 
   int share_h() const { return bar_h_ + ui::px(4) + body_h_; }
   // Narrow: the grid's circle and value, the sun's line under it.
   int compact_main_h(bool has_pv) const { return main_h_ + (has_pv ? body_h_ : 0); }
 
   // Places every part for the parts shown, the whole block in the middle of the height.
-  void arrange(int parts, bool has_pv, int used) {
+  void arrange(int parts, bool has_pv, bool show4, int used) {
     int y = std::max(0, (height_ - used) / 2);
     const int text_h = label_h_ + value_h_;
     const int ih = ui::line_height(big_icon_ ? Font::ICON : Font::ICON_SMALL);
@@ -288,7 +305,19 @@ class FlowView {
       place(b.label, tx, y + (main_h_ - text_h) / 2, tw, label_h_);
       place(b.value, tx, y + (main_h_ - text_h) / 2 + label_h_, tw, value_h_);
     };
-    if (wide_) {
+    if (show4) {
+      // Four columns: Solar | Battery | Home | Grid with three arrows between them.
+      const int col = (width_ - 3 * (arrow_w_ + ui::px(8))) / 4;
+      const int step = col + arrow_w_ + ui::px(8);
+      put_block(blocks_[SUN],     0 * step, col);
+      put_block(blocks_[BATTERY], 1 * step, col);
+      put_block(blocks_[HOME],    2 * step, col);
+      put_block(blocks_[GRID],    3 * step, col);
+      const int ah = ui::line_height(Font::ICON_SMALL);
+      for (int i = 0; i < 3; ++i)
+        place(arrows_[i], (i + 1) * step - arrow_w_ - ui::px(4), y + (main_h_ - ah) / 2, arrow_w_, ah);
+      y += main_h_;
+    } else if (wide_) {
       // Three columns: the sun at the left edge, the house in the middle, the grid at the right edge; the arrows in
       // the gaps between them.
       const int col = (width_ - 2 * (arrow_w_ + ui::px(8))) / 3;
@@ -328,6 +357,11 @@ class FlowView {
       fc_y_ = y;
       place(fc_track_, 0, y, width_, bar_h_);
       place(fc_label_, 0, y + bar_h_ + ui::px(4), width_, body_h_);
+      y += bar_h_ + ui::px(4) + body_h_;
+    }
+    if (parts & 8) {
+      y += gap_;
+      place(bat_line_, 0, y, width_, body_h_);
     }
   }
 
@@ -352,7 +386,7 @@ class FlowView {
     else ui::set_color(b.icon, theme::MUTED);
   }
 
-  void paint_blocks(const Reading &r, bool has_pv) {
+  void paint_blocks(const Reading &r, bool has_pv, bool show4) {
     const bool importing = r.grid > FLOWING, exporting = r.grid < -FLOWING;
     const theme::Role grid_role = exporting ? EXPORT : IMPORT;
     Block &g = blocks_[GRID];
@@ -365,7 +399,48 @@ class FlowView {
 
     const bool sunny = has_pv && r.pv > FLOWING;
     Block &s = blocks_[SUN];
-    if (wide_) {
+    if (show4) {
+      // Four columns: Solar | Battery | Home | Grid
+      if (has_pv) {
+        show_block(s);
+        paint_circle(s, ICON_SOLAR, SOLAR, sunny);
+        ui::set_text(s.label, plugin_->text("solar"));
+        ui::set_color(s.label, theme::MUTED);
+        ui::set_text(s.value, plugin_->power_text(r.pv));
+        ui::set_color(s.value, theme::INK);
+      } else {
+        hide_block(s);
+      }
+      const bool bat_discharging = r.battery > FLOWING, bat_charging = r.battery < -FLOWING;
+      Block &bat = blocks_[BATTERY];
+      show_block(bat);
+      paint_circle(bat, ICON_BATTERY, theme::MARK_GREEN, bat_discharging || bat_charging);
+      ui::set_text(bat.label, plugin_->text("battery"));
+      ui::set_color(bat.label, theme::MUTED);
+      ui::set_text(bat.value, plugin_->power_text(std::fabs(r.battery)));
+      ui::set_color(bat.value, theme::INK);
+      Block &h = blocks_[HOME];
+      show_block(h);
+      paint_circle(h, ICON_HOME, theme::INK, false);
+      ui::set_color(h.icon, theme::INK);
+      ui::set_text(h.label, plugin_->text("home"));
+      ui::set_color(h.label, theme::MUTED);
+      ui::set_text(h.value, plugin_->power_text(r.home));
+      ui::set_color(h.value, theme::INK);
+      // Arrow 0: Solar → Battery (solar active); Arrow 1: Battery ↔ Home; Arrow 2: Grid ↔ Home
+      show(arrows_[0], sunny);
+      ui::set_text(arrows_[0], sunny ? ui::icon(ICON_RIGHT) : "");
+      set_readable(arrows_[0], Tone::NORMAL, SOLAR);
+      show(arrows_[1], bat_discharging || bat_charging);
+      ui::set_text(arrows_[1], bat_discharging ? ui::icon(ICON_RIGHT) : bat_charging ? ui::icon(ICON_LEFT) : "");
+      set_readable(arrows_[1], Tone::NORMAL, theme::MARK_GREEN);
+      show(arrows_[2], importing || exporting);
+      ui::set_text(arrows_[2], importing ? ui::icon(ICON_LEFT) : exporting ? ui::icon(ICON_RIGHT) : "");
+      set_readable(arrows_[2], Tone::NORMAL, grid_role);
+      show(bat_line_, false);
+    } else if (wide_) {
+      hide_block(blocks_[BATTERY]);
+      show(arrows_[2], false);
       if (has_pv) {
         show_block(s);
         paint_circle(s, ICON_SOLAR, SOLAR, sunny);
@@ -392,12 +467,31 @@ class FlowView {
       ui::set_text(arrows_[1], importing ? ui::icon(ICON_LEFT) : exporting ? ui::icon(ICON_RIGHT) : "");
       set_readable(arrows_[1], Tone::NORMAL, grid_role);
     } else {
+      hide_block(blocks_[BATTERY]);
+      hide_block(blocks_[HOME]);
+      show(arrows_[1], false);
+      show(arrows_[2], false);
       // Narrow: "Solar 1,24 kW" in one line under the grid, amber while the sun gives.
       show(s.label, has_pv);
       ui::set_text(s.label, has_pv ? std::string(plugin_->text("solar")) + " " + plugin_->power_text(r.pv) : "");
       if (sunny) set_readable(s.label, Tone::NORMAL, SOLAR);
       else ui::set_color(s.label, theme::MUTED);
+      show(arrows_[0], false);
     }
+  }
+
+  void paint_bat_line(const Reading &r, bool on) {
+    show(bat_line_, on);
+    if (!on) { ui::set_text(bat_line_, ""); return; }
+    const bool discharging = r.battery > FLOWING;
+    const bool charging = r.battery < -FLOWING;
+    std::string text = std::string(plugin_->text("battery")) + " "
+                       + plugin_->power_text(std::fabs(r.battery));
+    if (discharging) text += " " + std::string(plugin_->text("discharging"));
+    else if (charging) text += " " + std::string(plugin_->text("charging"));
+    ui::set_text(bat_line_, text);
+    if (discharging || charging) set_readable(bat_line_, Tone::NORMAL, theme::MARK_GREEN);
+    else ui::set_color(bat_line_, theme::MUTED);
   }
 
   // The house's use split in what the sun covers (amber) and what comes from the grid (blue).
@@ -440,7 +534,7 @@ class FlowView {
     ui::set_color(fc_label_, theme::MUTED);
   }
 
-  // "Today: solar 3,4 kWh · from the grid 5,2 kWh"; only what is known. Without a forecast bar the sun's day is here.
+  // "Today: solar 3,4 kWh · from the grid 5,2 kWh · …"; only what is known.
   std::string day_text(const Reading &r) const {
     std::string out;
     auto add = [&](const char *key, float v) {
@@ -450,6 +544,8 @@ class FlowView {
     };
     add("day_solar", r.pv_today);
     add("day_grid", r.grid_today);
+    add("day_bat_charge", r.battery_today_charge);
+    add("day_bat_discharge", r.battery_today_discharge);
     return out;
   }
 
@@ -457,12 +553,24 @@ class FlowView {
   int width_ = 0, height_ = 0, label_h_ = 0, value_h_ = 0, body_h_ = 0, gap_ = 0, bar_h_ = 0, arrow_w_ = 0;
   int dia_ = 0, main_h_ = 0, share_y_ = 0, fc_y_ = 0, shown_ = -1;
   Font value_font_ = Font::TITLE;
-  bool today_ = true, wide_ = true, big_icon_ = false;
-  Block blocks_[3];
-  lv_obj_t *arrows_[2]{};
+  bool today_ = true, wide_ = true, wide4_ = false, big_icon_ = false;
+  Block blocks_[4];
+  lv_obj_t *arrows_[3]{};
   lv_obj_t *share_track_{}, *share_sun_{}, *share_grid_{}, *share_left_{}, *share_right_{};
-  lv_obj_t *day_{}, *fc_track_{}, *fc_fill_{}, *fc_label_{}, *note_{};
+  lv_obj_t *day_{}, *fc_track_{}, *fc_fill_{}, *fc_label_{}, *note_{}, *bat_line_{};
 };
+
+// ---- Shared helper ---------------------------------------------------------------------------------
+
+static float parse_entity(JsonObjectConst entities, const char *key) {
+  JsonObjectConst e = entities[key];
+  if (!e) return NAN;
+  const char *s = e["state"] | "";
+  if (!known(s)) return NAN;
+  char *end = nullptr;
+  const float v = strtof(s, &end);
+  return end != s ? v : NAN;
+}
 
 // ---- The tile ----------------------------------------------------------------------------------------
 
@@ -478,25 +586,20 @@ class FlowTile : public tessera::Tile {
   void on_state(JsonObjectConst data) override {
     JsonObjectConst entities = data["entities"];
     if (!entities) return;
-    JsonObjectConst cov = entities["coverage"];
-    coverage_sensor_ = NAN;
-    if (cov) {
-      const char *s = cov["state"] | "";
-      if (known(s)) {
-        char *end = nullptr;
-        const float v = strtof(s, &end);
-        if (end != s) coverage_sensor_ = v;
-      }
-    }
+    opts_.coverage           = parse_entity(entities, "coverage");
+    opts_.bat_charge         = parse_entity(entities, "battery_charge");
+    opts_.bat_discharge      = parse_entity(entities, "battery_discharge");
+    opts_.bat_today_charge   = parse_entity(entities, "battery_today_charge");
+    opts_.bat_today_discharge = parse_entity(entities, "battery_today_discharge");
   }
-  void on_tick(uint32_t) override { view_.paint(plugin_->read(invert_, coverage_sensor_)); }
+  void on_tick(uint32_t) override { view_.paint(plugin_->read(invert_, opts_)); }
   void on_theme() override {
     view_.on_theme();
     on_tick(0);
   }
   void on_tap() override {
     plugin_->card_invert = invert_;
-    plugin_->card_coverage = coverage_sensor_;
+    plugin_->card_opts   = opts_;
     tessera::open_card(plugin_->plugin_id(), "details", "", tile_);
   }
 
@@ -505,15 +608,17 @@ class FlowTile : public tessera::Tile {
   FlowView view_;
   int tile_ = -1;
   bool invert_ = false;
-  float coverage_sensor_ = NAN;
+  TileOptions opts_;
 };
 
 // ---- The card ------------------------------------------------------------------------------------------------------
 
-static constexpr uint32_t ICON_PANEL = 0xF0D9B;  // solar-panel
-static constexpr uint32_t ICON_LEAF = 0xF032A;   // leaf
-static constexpr uint32_t ICON_SUNNY = 0xF0599;  // weather-sunny
-static constexpr uint32_t ICON_METER = 0xF1A57;  // meter-electric
+static constexpr uint32_t ICON_PANEL = 0xF0D9B;       // solar-panel
+static constexpr uint32_t ICON_LEAF = 0xF032A;        // leaf
+static constexpr uint32_t ICON_SUNNY = 0xF0599;       // weather-sunny
+static constexpr uint32_t ICON_METER = 0xF1A57;       // meter-electric
+static constexpr uint32_t ICON_BAT_PLUS = 0xF0085;    // battery-plus
+static constexpr uint32_t ICON_BAT_MINUS = 0xF0086;   // battery-minus
 
 static void set_border(lv_obj_t *obj, theme::Role role) {
   const lv_color_t c = ui::color(role);
@@ -530,7 +635,7 @@ class DetailsCard : public tessera::Card {
     width_ = c.width;
     height_ = c.height;
     invert_ = plugin_->card_invert;
-    coverage_sensor_ = plugin_->card_coverage;
+    opts_   = plugin_->card_opts;
     const bool large = ui::large();
     line_w_ = std::max(2, ui::px(large ? 3 : 2));
     ring_w_ = std::max(2, ui::px(large ? 4 : 3));
@@ -546,10 +651,11 @@ class DetailsCard : public tessera::Card {
     dia_ = std::min({diagram_w_ * 10 / 32, (height_ - 2 * label_h_) * 10 / 22, ui::mm(30)});
 
     // Lines first, so the circles lie over their ends.
-    for (lv_obj_t *&l : lines_) l = ui::block(c.parent, theme::TRACK);
+    for (lv_obj_t *&l : lines_) { l = ui::block(c.parent, theme::TRACK); show(l, false); }
     for (lv_obj_t *&d : dots_) {
       d = ui::block(c.parent, theme::TRACK);
       lv_obj_set_style_radius(d, LV_RADIUS_CIRCLE, 0);
+      show(d, false);
     }
     for (Node &n : nodes_) {
       n.ring = ui::block(c.parent, theme::CARD);
@@ -583,19 +689,14 @@ class DetailsCard : public tessera::Card {
   void on_state(JsonObjectConst data) override {
     JsonObjectConst entities = data["entities"];
     if (!entities) return;
-    JsonObjectConst cov = entities["coverage"];
-    coverage_sensor_ = NAN;
-    if (cov) {
-      const char *s = cov["state"] | "";
-      if (known(s)) {
-        char *end = nullptr;
-        const float v = strtof(s, &end);
-        if (end != s) coverage_sensor_ = v;
-      }
-    }
+    opts_.coverage            = parse_entity(entities, "coverage");
+    opts_.bat_charge          = parse_entity(entities, "battery_charge");
+    opts_.bat_discharge       = parse_entity(entities, "battery_discharge");
+    opts_.bat_today_charge    = parse_entity(entities, "battery_today_charge");
+    opts_.bat_today_discharge = parse_entity(entities, "battery_today_discharge");
   }
   void on_tick(uint32_t) override {
-    const Reading r = plugin_->read(invert_, coverage_sensor_);
+    const Reading r = plugin_->read(invert_, opts_);
     ui::set_text(note_, r.have_grid ? "" : plugin_->text("choose"));
     paint_diagram(r);
     paint_list(r);
@@ -611,21 +712,34 @@ class DetailsCard : public tessera::Card {
   struct Row {
     lv_obj_t *icon{}, *name{}, *value{}, *rule{};
   };
-  enum { SUN, GRID, HOME };
-  // The lines: the sun down and to the grid, the sun down and to the house, the grid to the house.
-  enum { SUN_DOWN_G, SUN_TO_GRID, SUN_DOWN_H, SUN_TO_HOME, GRID_HOME, LINES };
-  enum { DOT_SUN_GRID, DOT_SUN_HOME, DOT_GRID_HOME, DOTS };
-  static constexpr int MAX_ROWS = 7;
+  enum { SUN, GRID, HOME, BATTERY, NODES };
+  // Lines: triangle set (solar–grid–home) + battery set (solar→battery, battery→home, battery→grid)
+  enum { SUN_DOWN_G, SUN_TO_GRID, SUN_DOWN_H, SUN_TO_HOME, GRID_HOME,
+         SUN_TO_BAT, BAT_TO_HOME_V, BAT_TO_HOME_H, BAT_TO_GRID_V, BAT_TO_GRID_H, LINES };
+  enum { DOT_SUN_GRID, DOT_SUN_HOME, DOT_GRID_HOME, DOT_SUN_BAT, DOT_BAT_HOME, DOT_BAT_GRID, DOTS };
+  static constexpr int MAX_ROWS = 11;
 
   void layout_diagram() {
+    const Reading probe = plugin_->read(invert_, opts_);
+    has_bat_layout_ = probe.have_battery;
     const int r = dia_ / 2;
+    const int top_cy    = label_h_ + ui::px(6) + r;
     const int bottom_cy = height_ - label_h_ - ui::px(6) - r;
-    const int top_cy = label_h_ + ui::px(6) + r;
-    nodes_[SUN].cx = diagram_w_ / 2, nodes_[SUN].cy = top_cy;
-    nodes_[GRID].cx = r, nodes_[GRID].cy = bottom_cy;
-    nodes_[HOME].cx = diagram_w_ - r, nodes_[HOME].cy = bottom_cy;
-    // What fits inside a ring: the value in the larger font where "8.88 kW" fits its width, the large icon and the
-    // day's energy under the value only where the three fit its height.
+    const int mid_cy    = (top_cy + bottom_cy) / 2;
+
+    nodes_[SUN].cx = diagram_w_ / 2; nodes_[SUN].cy = top_cy;
+    if (has_bat_layout_) {
+      // Diamond: SUN top, BATTERY bottom, GRID left, HOME right.
+      nodes_[GRID].cx    = r;              nodes_[GRID].cy    = mid_cy;
+      nodes_[HOME].cx    = diagram_w_ - r; nodes_[HOME].cy    = mid_cy;
+      nodes_[BATTERY].cx = diagram_w_ / 2; nodes_[BATTERY].cy = bottom_cy;
+    } else {
+      // Triangle: SUN top, GRID bottom-left, HOME bottom-right.
+      nodes_[GRID].cx    = r;              nodes_[GRID].cy    = bottom_cy;
+      nodes_[HOME].cx    = diagram_w_ - r; nodes_[HOME].cy    = bottom_cy;
+    }
+
+    // What fits inside a ring.
     const int inner = dia_ - 2 * ring_w_ - ui::px(6);
     const Font value_font = ui::text_width("8.88 kW", Font::BODY_LARGE) <= inner ? Font::BODY_LARGE : Font::BODY;
     const int vh = ui::line_height(value_font);
@@ -633,10 +747,11 @@ class DetailsCard : public tessera::Card {
     const int ih = ui::line_height(icon_font);
     show_extra_ = ih + vh + label_h_ <= inner;
     const int text_block = vh + (show_extra_ ? label_h_ : 0);
-    for (int i = 0; i < 3; ++i) {
+    const int n_nodes = has_bat_layout_ ? NODES : 3;
+    for (int i = 0; i < n_nodes; ++i) {
       Node &n = nodes_[i];
       place(n.ring, n.cx - r, n.cy - r, dia_, dia_);
-      // Icon, value and day inside the ring, as its children: one part, the three centred around its middle.
+      show(n.ring, true);
       const int start = -(ih + text_block) / 2;
       ui::set_font(n.icon, icon_font);
       ui::set_font(n.value, value_font);
@@ -644,28 +759,72 @@ class DetailsCard : public tessera::Card {
       inside(n.ring, n.value, dia_ - 2 * ring_w_, vh, start + ih + vh / 2);
       inside(n.ring, n.extra, dia_ - 2 * ring_w_, label_h_, start + ih + vh + label_h_ / 2);
       show(n.extra, show_extra_);
-      // The sun's name above it, the others' below.
+      // SUN name above, BATTERY name below, GRID/HOME name below.
       const int ny = i == SUN ? n.cy - r - label_h_ - ui::px(4) : n.cy + r + ui::px(4);
-      // The name a little wider than its circle, but inside the card at the edges.
       const int name_w = dia_ + ui::px(40);
       place(n.name, std::max(0, std::min(n.cx - name_w / 2, width_ - name_w)), std::max(0, ny), name_w, label_h_);
     }
-    // Lines as in Home Assistant's card: two from the bottom of the sun, one bending left to the grid, one right to
-    // the house, a little above the middle of the lower circles; the grid's line to the house a little below it.
+    if (!has_bat_layout_) {
+      show(nodes_[BATTERY].ring, false);
+      ui::set_text(nodes_[BATTERY].name, "");
+    }
+
     const int off = r / 4, lw = line_w_;
     const Node &sun = nodes_[SUN], &grid = nodes_[GRID], &home = nodes_[HOME];
     upper_y_ = grid.cy - r / 4;
     lower_y_ = grid.cy + r / 4;
     const int sun_bottom = sun.cy + r - ring_w_;
-    place(lines_[SUN_DOWN_G], sun.cx - off, sun_bottom, lw, upper_y_ - sun_bottom + lw);
-    place(lines_[SUN_TO_GRID], grid.cx + r - ring_w_, upper_y_, sun.cx - off - (grid.cx + r - ring_w_) + lw, lw);
-    place(lines_[SUN_DOWN_H], sun.cx + off, sun_bottom, lw, upper_y_ - sun_bottom + lw);
-    place(lines_[SUN_TO_HOME], sun.cx + off, upper_y_, home.cx - r + ring_w_ - (sun.cx + off), lw);
-    place(lines_[GRID_HOME], grid.cx + r - ring_w_, lower_y_, home.cx - grid.cx - 2 * (r - ring_w_), lw);
-    const int d = dot_;
-    place(dots_[DOT_SUN_GRID], (grid.cx + r + sun.cx - off) / 2 - d / 2, upper_y_ + lw / 2 - d / 2, d, d);
-    place(dots_[DOT_SUN_HOME], (sun.cx + off + home.cx - r) / 2 - d / 2, upper_y_ + lw / 2 - d / 2, d, d);
-    place(dots_[DOT_GRID_HOME], diagram_w_ / 2 - d / 2, lower_y_ + lw / 2 - d / 2, d, d);
+
+    if (has_bat_layout_) {
+      const Node &bat = nodes_[BATTERY];
+      // SUN → GRID and SUN → HOME (diagonal L-shapes, same as triangle but grid/home are at mid_cy)
+      place(lines_[SUN_DOWN_G], sun.cx - off, sun_bottom, lw, upper_y_ - sun_bottom + lw);
+      place(lines_[SUN_TO_GRID], grid.cx + r - ring_w_, upper_y_,
+            sun.cx - off - (grid.cx + r - ring_w_) + lw, lw);
+      place(lines_[SUN_DOWN_H], sun.cx + off, sun_bottom, lw, upper_y_ - sun_bottom + lw);
+      place(lines_[SUN_TO_HOME], sun.cx + off, upper_y_,
+            home.cx - r + ring_w_ - (sun.cx + off), lw);
+      // GRID → HOME horizontal at lower_y_
+      place(lines_[GRID_HOME], grid.cx + r - ring_w_, lower_y_,
+            home.cx - grid.cx - 2 * (r - ring_w_), lw);
+      // SUN → BATTERY: straight vertical
+      place(lines_[SUN_TO_BAT], sun.cx - lw / 2, sun_bottom, lw, bat.cy - r + ring_w_ - sun_bottom);
+      // BATTERY → HOME: L-shape (up then right)
+      const int bat_to_home_y = (bat.cy - r + ring_w_ + home.cy + r / 4) / 2;
+      place(lines_[BAT_TO_HOME_V], bat.cx + off, bat_to_home_y, lw, bat.cy - r + ring_w_ - bat_to_home_y + lw);
+      place(lines_[BAT_TO_HOME_H], bat.cx + off, bat_to_home_y,
+            home.cx - r + ring_w_ - (bat.cx + off), lw);
+      // BATTERY → GRID: L-shape (up then left)
+      const int bat_to_grid_y = bat_to_home_y + lw * 2;
+      place(lines_[BAT_TO_GRID_V], bat.cx - off, bat_to_grid_y, lw, bat.cy - r + ring_w_ - bat_to_grid_y + lw);
+      place(lines_[BAT_TO_GRID_H], grid.cx + r - ring_w_, bat_to_grid_y,
+            bat.cx - off - (grid.cx + r - ring_w_) + lw, lw);
+      const int d = dot_;
+      place(dots_[DOT_SUN_GRID], (grid.cx + r + sun.cx - off) / 2 - d / 2, upper_y_ + lw / 2 - d / 2, d, d);
+      place(dots_[DOT_SUN_HOME], (sun.cx + off + home.cx - r) / 2 - d / 2, upper_y_ + lw / 2 - d / 2, d, d);
+      place(dots_[DOT_GRID_HOME], diagram_w_ / 2 - d / 2, lower_y_ + lw / 2 - d / 2, d, d);
+      place(dots_[DOT_SUN_BAT], sun.cx - d / 2, (sun_bottom + bat.cy - r) / 2 - d / 2, d, d);
+      place(dots_[DOT_BAT_HOME], (bat.cx + off + home.cx - r) / 2 - d / 2, bat_to_home_y + lw / 2 - d / 2, d, d);
+      place(dots_[DOT_BAT_GRID], (bat.cx - off + grid.cx + r) / 2 - d / 2, bat_to_grid_y + lw / 2 - d / 2, d, d);
+    } else {
+      // Triangle layout (unchanged)
+      place(lines_[SUN_DOWN_G], sun.cx - off, sun_bottom, lw, upper_y_ - sun_bottom + lw);
+      place(lines_[SUN_TO_GRID], grid.cx + r - ring_w_, upper_y_,
+            sun.cx - off - (grid.cx + r - ring_w_) + lw, lw);
+      place(lines_[SUN_DOWN_H], sun.cx + off, sun_bottom, lw, upper_y_ - sun_bottom + lw);
+      place(lines_[SUN_TO_HOME], sun.cx + off, upper_y_,
+            home.cx - r + ring_w_ - (sun.cx + off), lw);
+      place(lines_[GRID_HOME], grid.cx + r - ring_w_, lower_y_,
+            home.cx - grid.cx - 2 * (r - ring_w_), lw);
+      const int d = dot_;
+      place(dots_[DOT_SUN_GRID], (grid.cx + r + sun.cx - off) / 2 - d / 2, upper_y_ + lw / 2 - d / 2, d, d);
+      place(dots_[DOT_SUN_HOME], (sun.cx + off + home.cx - r) / 2 - d / 2, upper_y_ + lw / 2 - d / 2, d, d);
+      place(dots_[DOT_GRID_HOME], diagram_w_ / 2 - d / 2, lower_y_ + lw / 2 - d / 2, d, d);
+      // Hide battery lines/dots
+      for (int i : {SUN_TO_BAT, BAT_TO_HOME_V, BAT_TO_HOME_H, BAT_TO_GRID_V, BAT_TO_GRID_H})
+        show(lines_[i], false);
+      for (int i : {DOT_SUN_BAT, DOT_BAT_HOME, DOT_BAT_GRID}) show(dots_[i], false);
+    }
   }
 
   void paint_node(Node &n, uint32_t icon, theme::Role role, bool active, const std::string &value,
@@ -692,12 +851,17 @@ class DetailsCard : public tessera::Card {
 
   void paint_diagram(const Reading &r) {
     const bool on = r.have_grid;
-    for (Node &n : nodes_) {
+    // If battery presence changed, re-layout the diagram.
+    if (r.have_battery != has_bat_layout_) layout_diagram();
+    const int active_nodes = has_bat_layout_ ? NODES : 3;
+    for (int i = 0; i < active_nodes; ++i) {
+      Node &n = nodes_[i];
       show(n.ring, on);
-      if (!on) ui::set_text(n.icon, ""), ui::set_text(n.value, ""), ui::set_text(n.extra, ""), ui::set_text(n.name, "");
+      if (!on) ui::set_text(n.icon, ""), ui::set_text(n.value, ""), ui::set_text(n.extra, ""),
+               ui::set_text(n.name, "");
     }
-    for (lv_obj_t *l : lines_) show(l, on);
     if (!on) {
+      for (lv_obj_t *l : lines_) show(l, false);
       for (lv_obj_t *d : dots_) show(d, false);
       return;
     }
@@ -707,7 +871,6 @@ class DetailsCard : public tessera::Card {
     const float sun_home = std::min(pv, r.home);
     paint_node(nodes_[SUN], ICON_SOLAR, SOLAR, pv > FLOWING, has_pv ? plugin_->power_text(pv) : "–",
                std::isnan(r.pv_today) ? std::string() : plugin_->energy_text(r.pv_today), plugin_->text("solar"));
-    // The screen's fonts have no arrows: the colour and the name say which way the power goes.
     paint_node(nodes_[GRID], ICON_GRID, exporting ? EXPORT : IMPORT, importing || exporting,
                plugin_->power_text(r.grid),
                std::isnan(r.grid_today) ? std::string() : plugin_->energy_text(r.grid_today),
@@ -723,6 +886,35 @@ class DetailsCard : public tessera::Card {
     show(nodes_[SUN].ring, has_pv);
     if (!has_pv) ui::set_text(nodes_[SUN].icon, ""), ui::set_text(nodes_[SUN].value, ""),
         ui::set_text(nodes_[SUN].extra, ""), ui::set_text(nodes_[SUN].name, "");
+    if (has_bat_layout_) {
+      const bool bat_discharging = r.battery > FLOWING, bat_charging = r.battery < -FLOWING;
+      const bool bat_exporting = bat_discharging && exporting;
+      paint_node(nodes_[BATTERY], bat_discharging ? ICON_BAT_MINUS : ICON_BAT_PLUS,
+                 theme::MARK_GREEN, bat_discharging || bat_charging,
+                 plugin_->power_text(std::fabs(r.battery)),
+                 std::isnan(r.battery_today_discharge) ? std::string()
+                     : plugin_->energy_text(r.battery_today_discharge),
+                 plugin_->text("battery"));
+      // SUN → BATTERY line: active when solar is charging battery
+      show(lines_[SUN_TO_BAT], has_pv);
+      ui::set_fill(lines_[SUN_TO_BAT], Tone::NORMAL, (has_pv && bat_charging) ? SOLAR : theme::TRACK);
+      show(dots_[DOT_SUN_BAT], has_pv && bat_charging);
+      ui::set_fill(dots_[DOT_SUN_BAT], Tone::NORMAL, SOLAR);
+      // BATTERY → HOME lines
+      show(lines_[BAT_TO_HOME_V], true);
+      show(lines_[BAT_TO_HOME_H], true);
+      ui::set_fill(lines_[BAT_TO_HOME_V], Tone::NORMAL, bat_discharging ? theme::MARK_GREEN : theme::TRACK);
+      ui::set_fill(lines_[BAT_TO_HOME_H], Tone::NORMAL, bat_discharging ? theme::MARK_GREEN : theme::TRACK);
+      show(dots_[DOT_BAT_HOME], bat_discharging);
+      ui::set_fill(dots_[DOT_BAT_HOME], Tone::NORMAL, theme::MARK_GREEN);
+      // BATTERY → GRID lines (battery export)
+      show(lines_[BAT_TO_GRID_V], true);
+      show(lines_[BAT_TO_GRID_H], true);
+      ui::set_fill(lines_[BAT_TO_GRID_V], Tone::NORMAL, bat_exporting ? EXPORT : theme::TRACK);
+      ui::set_fill(lines_[BAT_TO_GRID_H], Tone::NORMAL, bat_exporting ? EXPORT : theme::TRACK);
+      show(dots_[DOT_BAT_GRID], bat_exporting);
+      ui::set_fill(dots_[DOT_BAT_GRID], Tone::NORMAL, EXPORT);
+    }
   }
 
   // Every sensor in a row: its icon, its name and its value; only those chosen.
@@ -753,6 +945,17 @@ class DetailsCard : public tessera::Card {
       }
       if (!std::isnan(r.grid_today))
         items[n++] = {ICON_METER, IMPORT, plugin_->text("row_grid_today"), plugin_->energy_text(r.grid_today)};
+      if (r.have_battery) {
+        const bool discharging = r.battery > FLOWING;
+        items[n++] = {discharging ? ICON_BAT_MINUS : ICON_BAT_PLUS, theme::MARK_GREEN,
+                      plugin_->text("row_battery"), plugin_->power_text(std::fabs(r.battery))};
+        if (!std::isnan(r.battery_today_charge))
+          items[n++] = {ICON_BAT_PLUS, theme::MARK_GREEN,
+                        plugin_->text("row_bat_today_charge"), plugin_->energy_text(r.battery_today_charge)};
+        if (!std::isnan(r.battery_today_discharge))
+          items[n++] = {ICON_BAT_MINUS, theme::MARK_GREEN,
+                        plugin_->text("row_bat_today_discharge"), plugin_->energy_text(r.battery_today_discharge)};
+      }
     }
     // The rows share the height, at most a comfortable row each, in the middle.
     const int ih = ui::line_height(Font::ICON_SMALL), th = ui::line_height(Font::TITLE);
@@ -797,10 +1000,10 @@ class DetailsCard : public tessera::Card {
   const EnergyFlow *plugin_;
   int width_ = 0, height_ = 0, diagram_w_ = 0, list_x_ = 0, list_w_ = 0, dia_ = 0, line_w_ = 0, ring_w_ = 0;
   int dot_ = 0, label_h_ = 0, value_h_ = 0, upper_y_ = 0, lower_y_ = 0, rows_shown_ = -1;
-  bool show_extra_ = true;
+  bool show_extra_ = true, has_bat_layout_ = false;
   bool invert_ = false;
-  float coverage_sensor_ = NAN;
-  Node nodes_[3];
+  TileOptions opts_;
+  Node nodes_[NODES];
   lv_obj_t *lines_[LINES]{}, *dots_[DOTS]{};
   Row rows_[MAX_ROWS];
   lv_obj_t *note_{};

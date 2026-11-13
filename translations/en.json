@@ -22,7 +22,15 @@
     "row_coverage": "Solar coverage",
     "row_pv_today": "Solar today",
     "row_forecast": "Forecast today",
-    "row_grid_today": "From the grid today"
+    "row_grid_today": "From the grid today",
+    "battery": "Battery",
+    "charging": "charging",
+    "discharging": "discharging",
+    "row_battery": "Battery",
+    "row_bat_today_charge": "Charged today",
+    "row_bat_today_discharge": "Discharged today",
+    "day_bat_charge": "charged {v}",
+    "day_bat_discharge": "discharged {v}"
   },
   "app": {
     "name": "Energy flow",
@@ -45,6 +53,14 @@
     "input_forecast": "Forecast today",
     "input_forecast_hint": "Today's solar forecast in kWh, such as Forecast.Solar's. May stay empty.",
     "input_grid_today": "Grid today",
-    "input_grid_today_hint": "Today's energy from the grid in kWh. May stay empty."
+    "input_grid_today_hint": "Today's energy from the grid in kWh. May stay empty.",
+    "battery_charge_option": "Battery charge power",
+    "battery_charge_option_hint": "Power going into the battery in W or kW. Leave empty if no battery.",
+    "battery_discharge_option": "Battery discharge power",
+    "battery_discharge_option_hint": "Power coming from the battery in W or kW. Leave empty if no battery.",
+    "battery_today_charge_option": "Battery charged today",
+    "battery_today_charge_option_hint": "Energy the battery charged today in kWh. May stay empty.",
+    "battery_today_discharge_option": "Battery discharged today",
+    "battery_today_discharge_option_hint": "Energy the battery discharged today in kWh. May stay empty."
   }
 }
