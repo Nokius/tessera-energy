@@ -45,7 +45,7 @@ static constexpr float FLOWING = 5.0f;             // watts below which nothing 
 static constexpr theme::Role SOLAR       = theme::MARK_AMBER;
 static constexpr theme::Role IMPORT      = theme::MARK_BLUE;
 static constexpr theme::Role EXPORT      = theme::MARK_GREEN;
-static constexpr theme::Role BAT_CHARGE  = theme::MARK_RED;
+static constexpr theme::Role BAT_CHARGE  = theme::MARK_AMBER;
 static constexpr theme::Role BAT_DISCH   = theme::MARK_GREEN;
 
 // A label inside a circle: a child of it, so the two are one part, centred in it.
