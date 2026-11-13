@@ -42,9 +42,11 @@ static constexpr uint32_t ICON_LEFT = 0xF004D;     // arrow-left
 static constexpr float FLOWING = 5.0f;             // watts below which nothing counts as flowing
 
 // The colours of the three: the sun amber, the grid blue while it gives, green while it takes.
-static constexpr theme::Role SOLAR = theme::MARK_AMBER;
-static constexpr theme::Role IMPORT = theme::MARK_BLUE;
-static constexpr theme::Role EXPORT = theme::MARK_GREEN;
+static constexpr theme::Role SOLAR       = theme::MARK_AMBER;
+static constexpr theme::Role IMPORT      = theme::MARK_BLUE;
+static constexpr theme::Role EXPORT      = theme::MARK_GREEN;
+static constexpr theme::Role BAT_CHARGE  = theme::MARK_RED;
+static constexpr theme::Role BAT_DISCH   = theme::MARK_GREEN;
 
 // A label inside a circle: a child of it, so the two are one part, centred in it.
 static void inside(lv_obj_t *circle, lv_obj_t *label, int w, int h, int dy = 0) {
@@ -412,9 +414,10 @@ class FlowView {
         hide_block(s);
       }
       const bool bat_discharging = r.battery > FLOWING, bat_charging = r.battery < -FLOWING;
+      const theme::Role bat_role = bat_discharging ? BAT_DISCH : BAT_CHARGE;
       Block &bat = blocks_[BATTERY];
       show_block(bat);
-      paint_circle(bat, ICON_BATTERY, theme::MARK_GREEN, bat_discharging || bat_charging);
+      paint_circle(bat, ICON_BATTERY, bat_role, bat_discharging || bat_charging);
       ui::set_text(bat.label, plugin_->text("battery"));
       ui::set_color(bat.label, theme::MUTED);
       ui::set_text(bat.value, plugin_->power_text(std::fabs(r.battery)));
@@ -427,13 +430,13 @@ class FlowView {
       ui::set_color(h.label, theme::MUTED);
       ui::set_text(h.value, plugin_->power_text(r.home));
       ui::set_color(h.value, theme::INK);
-      // Arrow 0: Solar → Battery (solar active); Arrow 1: Battery ↔ Home; Arrow 2: Grid ↔ Home
+      // Arrow 0: Solar → Battery; Arrow 1: Battery ↔ Home (green discharge, red charge); Arrow 2: Grid ↔ Home
       show(arrows_[0], sunny);
       ui::set_text(arrows_[0], sunny ? ui::icon(ICON_RIGHT) : "");
       set_readable(arrows_[0], Tone::NORMAL, SOLAR);
       show(arrows_[1], bat_discharging || bat_charging);
       ui::set_text(arrows_[1], bat_discharging ? ui::icon(ICON_RIGHT) : bat_charging ? ui::icon(ICON_LEFT) : "");
-      set_readable(arrows_[1], Tone::NORMAL, theme::MARK_GREEN);
+      set_readable(arrows_[1], Tone::NORMAL, bat_role);
       show(arrows_[2], importing || exporting);
       ui::set_text(arrows_[2], importing ? ui::icon(ICON_LEFT) : exporting ? ui::icon(ICON_RIGHT) : "");
       set_readable(arrows_[2], Tone::NORMAL, grid_role);
@@ -490,7 +493,8 @@ class FlowView {
     if (discharging) text += " " + std::string(plugin_->text("discharging"));
     else if (charging) text += " " + std::string(plugin_->text("charging"));
     ui::set_text(bat_line_, text);
-    if (discharging || charging) set_readable(bat_line_, Tone::NORMAL, theme::MARK_GREEN);
+    if (discharging) set_readable(bat_line_, Tone::NORMAL, BAT_DISCH);
+    else if (charging) set_readable(bat_line_, Tone::NORMAL, BAT_CHARGE);
     else ui::set_color(bat_line_, theme::MUTED);
   }
 
@@ -888,32 +892,31 @@ class DetailsCard : public tessera::Card {
         ui::set_text(nodes_[SUN].extra, ""), ui::set_text(nodes_[SUN].name, "");
     if (has_bat_layout_) {
       const bool bat_discharging = r.battery > FLOWING, bat_charging = r.battery < -FLOWING;
-      const bool bat_exporting = bat_discharging && exporting;
+      const theme::Role bat_role = bat_discharging ? BAT_DISCH : BAT_CHARGE;
       paint_node(nodes_[BATTERY], bat_discharging ? ICON_BAT_MINUS : ICON_BAT_PLUS,
-                 theme::MARK_GREEN, bat_discharging || bat_charging,
+                 bat_role, bat_discharging || bat_charging,
                  plugin_->power_text(std::fabs(r.battery)),
                  std::isnan(r.battery_today_discharge) ? std::string()
                      : plugin_->energy_text(r.battery_today_discharge),
                  plugin_->text("battery"));
-      // SUN → BATTERY line: active when solar is charging battery
+      // SUN → BATTERY: red (charging) when active, grey otherwise
       show(lines_[SUN_TO_BAT], has_pv);
-      ui::set_fill(lines_[SUN_TO_BAT], Tone::NORMAL, (has_pv && bat_charging) ? SOLAR : theme::TRACK);
+      ui::set_fill(lines_[SUN_TO_BAT], Tone::NORMAL, (has_pv && bat_charging) ? BAT_CHARGE : theme::TRACK);
       show(dots_[DOT_SUN_BAT], has_pv && bat_charging);
-      ui::set_fill(dots_[DOT_SUN_BAT], Tone::NORMAL, SOLAR);
-      // BATTERY → HOME lines
+      ui::set_fill(dots_[DOT_SUN_BAT], Tone::NORMAL, BAT_CHARGE);
+      // BATTERY → HOME: green when discharging
       show(lines_[BAT_TO_HOME_V], true);
       show(lines_[BAT_TO_HOME_H], true);
-      ui::set_fill(lines_[BAT_TO_HOME_V], Tone::NORMAL, bat_discharging ? theme::MARK_GREEN : theme::TRACK);
-      ui::set_fill(lines_[BAT_TO_HOME_H], Tone::NORMAL, bat_discharging ? theme::MARK_GREEN : theme::TRACK);
+      ui::set_fill(lines_[BAT_TO_HOME_V], Tone::NORMAL, bat_discharging ? BAT_DISCH : theme::TRACK);
+      ui::set_fill(lines_[BAT_TO_HOME_H], Tone::NORMAL, bat_discharging ? BAT_DISCH : theme::TRACK);
       show(dots_[DOT_BAT_HOME], bat_discharging);
-      ui::set_fill(dots_[DOT_BAT_HOME], Tone::NORMAL, theme::MARK_GREEN);
-      // BATTERY → GRID lines (battery export)
+      ui::set_fill(dots_[DOT_BAT_HOME], Tone::NORMAL, BAT_DISCH);
+      // BATTERY → GRID: always grey (structural connection, no active flow colour)
       show(lines_[BAT_TO_GRID_V], true);
       show(lines_[BAT_TO_GRID_H], true);
-      ui::set_fill(lines_[BAT_TO_GRID_V], Tone::NORMAL, bat_exporting ? EXPORT : theme::TRACK);
-      ui::set_fill(lines_[BAT_TO_GRID_H], Tone::NORMAL, bat_exporting ? EXPORT : theme::TRACK);
-      show(dots_[DOT_BAT_GRID], bat_exporting);
-      ui::set_fill(dots_[DOT_BAT_GRID], Tone::NORMAL, EXPORT);
+      ui::set_fill(lines_[BAT_TO_GRID_V], Tone::NORMAL, theme::TRACK);
+      ui::set_fill(lines_[BAT_TO_GRID_H], Tone::NORMAL, theme::TRACK);
+      show(dots_[DOT_BAT_GRID], false);
     }
   }
 
@@ -947,13 +950,14 @@ class DetailsCard : public tessera::Card {
         items[n++] = {ICON_METER, IMPORT, plugin_->text("row_grid_today"), plugin_->energy_text(r.grid_today)};
       if (r.have_battery) {
         const bool discharging = r.battery > FLOWING;
-        items[n++] = {discharging ? ICON_BAT_MINUS : ICON_BAT_PLUS, theme::MARK_GREEN,
+        const theme::Role bat_role = discharging ? BAT_DISCH : BAT_CHARGE;
+        items[n++] = {discharging ? ICON_BAT_MINUS : ICON_BAT_PLUS, bat_role,
                       plugin_->text("row_battery"), plugin_->power_text(std::fabs(r.battery))};
         if (!std::isnan(r.battery_today_charge))
-          items[n++] = {ICON_BAT_PLUS, theme::MARK_GREEN,
+          items[n++] = {ICON_BAT_PLUS, BAT_CHARGE,
                         plugin_->text("row_bat_today_charge"), plugin_->energy_text(r.battery_today_charge)};
         if (!std::isnan(r.battery_today_discharge))
-          items[n++] = {ICON_BAT_MINUS, theme::MARK_GREEN,
+          items[n++] = {ICON_BAT_MINUS, BAT_DISCH,
                         plugin_->text("row_bat_today_discharge"), plugin_->energy_text(r.battery_today_discharge)};
       }
     }
