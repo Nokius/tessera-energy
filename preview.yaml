@@ -2,7 +2,7 @@
 # defaults, one made-up entity per sensor. Each state is also under the attribute "": the bench answers the screen's
 # question for a plain state (which ESPHome sends with an empty attribute) from there.
 tiles:
-  - { tile: flow, name: Energy, sizes: [3x1, 3x2, 2x1, 1x1] }
+  - { tile: flow, name: Energy, sizes: [6x2, 3x1, 3x2, 2x1, 1x1] }
 
 cards:
   - { card: details }
@@ -26,3 +26,15 @@ states:
   sensor.energy_grid_today_not_chosen:
     state: "5.2"
     attributes: { "": "5.2", unit_of_measurement: kWh }
+  sensor.energy_battery_charge_not_chosen:
+    state: "0"
+    attributes: { "": "0", unit_of_measurement: W }
+  sensor.energy_battery_discharge_not_chosen:
+    state: "800"
+    attributes: { "": "800", unit_of_measurement: W }
+  sensor.energy_battery_today_charge_not_chosen:
+    state: "2.1"
+    attributes: { "": "2.1", unit_of_measurement: kWh }
+  sensor.energy_battery_today_discharge_not_chosen:
+    state: "1.6"
+    attributes: { "": "1.6", unit_of_measurement: kWh }
